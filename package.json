@@ -1,6 +1,6 @@
 {
   "name": "deckops",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Decky plugin: Tailscale toggle, service switches (OpenClaw gateway) and a chat box to your on-device agent",
   "type": "module",
   "scripts": {

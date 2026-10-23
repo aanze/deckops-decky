@@ -6,6 +6,7 @@ import shutil
 import socket
 import subprocess
 import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -161,6 +162,37 @@ def apply_serve(svc):
     return ""
 
 
+# Previous (CPUUsageNSec, monotonic ns) per service, to turn the cumulative
+# counter into a CPU % between two polls.
+_CPU_PREV = {}
+
+
+def service_usage(svc):
+    """RAM (bytes) and CPU (% of one core, like top) of the unit's whole cgroup.
+    CPU is None on the first sample after a (re)start."""
+    rc, out, _ = _systemctl(svc, "show", "-p", "MemoryCurrent", "-p", "CPUUsageNSec", svc["unit"], timeout=8)
+    if rc != 0:
+        return None
+    vals = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
+    try:
+        mem = int(vals.get("MemoryCurrent", ""))
+    except ValueError:
+        mem = None
+    cpu = None
+    try:
+        used = int(vals.get("CPUUsageNSec", ""))
+        now = time.monotonic_ns()
+        prev = _CPU_PREV.get(svc["id"])
+        _CPU_PREV[svc["id"]] = (used, now)
+        if prev and used >= prev[0] and now - prev[1] > 5e8:
+            cpu = round(100.0 * (used - prev[0]) / (now - prev[1]), 1)
+    except ValueError:
+        _CPU_PREV.pop(svc["id"], None)
+    if mem is None and cpu is None:
+        return None
+    return {"mem": mem, "cpu": cpu}
+
+
 def service_status(svc, ts):
     rc, out, _ = _systemctl(svc, "is-active", svc["unit"], timeout=8)
     active = out.strip() or "unknown"
@@ -198,6 +230,7 @@ def service_status(svc, ts):
         "served": served,
         "url": url,
         "chat": bool(svc.get("chat")),
+        "usage": service_usage(svc) if state in ("ready", "starting") else None,
     }
 
 

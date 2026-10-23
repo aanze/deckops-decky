@@ -34,6 +34,7 @@ interface Service {
   served: boolean;
   url: string;
   chat: boolean;
+  usage?: { mem: number | null; cpu: number | null } | null;
 }
 
 interface Status {
@@ -120,6 +121,52 @@ const SERVICE_LABEL: Record<ServiceState, { text: string; color: string }> = {
   missing: { text: "Not installed", color: C.err },
 };
 
+// The QAM scroller stops as soon as the focused element is visible, so going up
+// onto the first card leaves the top of the panel hidden and the next Up jumps
+// straight to the header. Snap the scroll container to the top instead.
+const scrollPanelToTop = (el: Element | null) => {
+  let node = el?.parentElement ?? null;
+  while (node) {
+    const { overflowY } = window.getComputedStyle(node);
+    if ((overflowY === "auto" || overflowY === "scroll") && node.scrollHeight > node.clientHeight) {
+      node.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+    node = node.parentElement;
+  }
+};
+
+const formatBytes = (n: number) =>
+  n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GB` : `${Math.round(n / 1024 ** 2)} MB`;
+
+const UsageLine: FC<{ service: Service }> = ({ service }) => {
+  const u = service.usage;
+  if (!u || (u.mem == null && u.cpu == null)) return null;
+  const parts = [
+    u.mem != null ? `${formatBytes(u.mem)} RAM` : null,
+    `${u.cpu != null ? (u.cpu < 1 ? "<1" : Math.round(u.cpu)) : "…"}% CPU`,
+  ].filter(Boolean);
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        fontSize: 11,
+        color: C.muted,
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+      }}
+    >
+      <Dot color={C.on} size={6} />
+      <span style={{ color: C.text, opacity: 0.85 }}>{service.label}</span>
+      <span style={{ marginLeft: "auto", fontFamily: "monospace", fontVariantNumeric: "tabular-nums" }}>
+        {parts.join(" · ")}
+      </span>
+    </div>
+  );
+};
+
 const Dot: FC<{ color: string; size?: number; glow?: boolean }> = ({ color, size = 10, glow }) => (
   <span
     style={{
@@ -152,9 +199,12 @@ const StatusCard: FC<{ status: Status | null; busy: boolean; onActivate: () => v
           ? "Install the Tailscale CLI first"
           : status?.error || "";
 
+  const usage = (status?.services ?? []).filter((s) => s.usage && (s.state === "ready" || s.state === "starting"));
+
   return (
     <Focusable
       onActivate={onActivate}
+      onGamepadFocus={(e: any) => scrollPanelToTop((e?.currentTarget ?? e?.target) as Element | null)}
       style={{
         margin: "4px 0 6px",
         padding: "12px 14px",
@@ -217,6 +267,23 @@ const StatusCard: FC<{ status: Status | null; busy: boolean; onActivate: () => v
               </span>
             </>
           )}
+        </div>
+      )}
+
+      {usage.length > 0 && (
+        <div
+          style={{
+            marginTop: 2,
+            paddingTop: 6,
+            borderTop: `1px solid ${C.border}`,
+            display: "flex",
+            flexDirection: "column",
+            gap: 3,
+          }}
+        >
+          {usage.map((s) => (
+            <UsageLine key={s.id} service={s} />
+          ))}
         </div>
       )}
     </Focusable>
