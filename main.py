@@ -46,8 +46,12 @@ def _run(args, timeout=15):
         return proc.returncode, proc.stdout, proc.stderr
     except FileNotFoundError:
         return 127, "", f"{args[0]}: not found"
-    except subprocess.TimeoutExpired:
-        return 124, "", f"{' '.join(args)}: timed out after {timeout}s"
+    except subprocess.TimeoutExpired as e:
+        # Keep whatever the command printed before the kill: `tailscale serve`
+        # waits forever when Serve is not enabled, after printing the fix.
+        out = (e.stdout or b"").decode(errors="replace") if isinstance(e.stdout, bytes) else (e.stdout or "")
+        err = (e.stderr or b"").decode(errors="replace") if isinstance(e.stderr, bytes) else (e.stderr or "")
+        return 124, out, (err or out).strip() or f"{' '.join(args)}: timed out after {timeout}s"
 
 
 
@@ -138,9 +142,9 @@ def apply_serve(svc):
         return ""
     if port in _served_ports():
         return ""
-    rc, out, err = _run([TAILSCALE, "serve", "--bg", f"http://127.0.0.1:{port}"], timeout=20)
+    rc, out, err = _run([TAILSCALE, "serve", "--bg", f"http://127.0.0.1:{port}"], timeout=8)
     if rc != 0:
-        msg = (err or out).strip()
+        msg = " ".join((err or out).split())
         decky.logger.warning("tailscale serve failed for %s: %s", svc["id"], msg)
         return msg[:400]
     return ""
