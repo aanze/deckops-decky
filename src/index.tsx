@@ -466,12 +466,14 @@ const ChatBox: FC<{ service: Service }> = ({ service }) => {
         />
       </PanelSectionRow>
       <PanelSectionRow>
-        <ButtonItem layout="below" onClick={send} disabled={sending || !draft.trim()}>
-          {sending ? "Waiting for reply…" : "Send"}
-        </ButtonItem>
+        <Focusable style={{ display: "flex", width: "100%", boxSizing: "border-box", padding: "4px 0" }}>
+          <DialogButton style={{ ...SMALL_BUTTON, fontSize: 13 }} onClick={send} disabled={sending || !draft.trim()}>
+            {sending ? "Waiting for reply…" : "Send"}
+          </DialogButton>
+        </Focusable>
       </PanelSectionRow>
       <PanelSectionRow>
-        <Focusable style={{ display: "flex", gap: 8, width: "100%", boxSizing: "border-box" }}>
+        <Focusable style={{ display: "flex", gap: 8, width: "100%", boxSizing: "border-box", padding: "4px 0 6px" }}>
           <DialogButton style={SMALL_BUTTON} onClick={() => chatCancel()} disabled={!sending}>
             Stop
           </DialogButton>
