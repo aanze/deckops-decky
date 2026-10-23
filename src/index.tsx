@@ -12,6 +12,20 @@ interface Peer {
   exit_node: boolean;
 }
 
+type ServiceState = "ready" | "starting" | "stopping" | "stopped" | "failed" | "missing";
+
+interface Service {
+  id: string;
+  label: string;
+  unit: string;
+  scope: "user" | "system";
+  state: ServiceState;
+  autostart: boolean;
+  serve: boolean;
+  served: boolean;
+  url: string;
+}
+
 interface Status {
   installed: boolean;
   daemon: boolean;
@@ -24,11 +38,17 @@ interface Status {
   user: string;
   version: string;
   peers: Peer[];
+  served: number[];
+  services: Service[];
   error: string;
 }
 
+type Result = { ok: boolean; error?: string; warning?: string };
+
 const getStatus = callable<[], Status>("get_status");
-const setEnabled = callable<[enabled: boolean], { ok: boolean; error?: string }>("set_enabled");
+const setEnabled = callable<[enabled: boolean], Result>("set_enabled");
+const setServiceEnabled = callable<[id: string, enabled: boolean], Result>("set_service_enabled");
+const setServiceAutostart = callable<[id: string, enabled: boolean], Result>("set_service_autostart");
 
 const POLL_MS = 4000;
 
@@ -51,6 +71,15 @@ const STATE_LABEL: Record<State, { text: string; color: string }> = {
   no_daemon: { text: "Daemon stopped", color: C.off },
   missing: { text: "Tailscale not installed", color: C.err },
   error: { text: "Error", color: C.err },
+};
+
+const SERVICE_LABEL: Record<ServiceState, { text: string; color: string }> = {
+  ready: { text: "Running", color: C.on },
+  starting: { text: "Starting…", color: C.warn },
+  stopping: { text: "Stopping…", color: C.warn },
+  stopped: { text: "Stopped", color: C.off },
+  failed: { text: "Failed", color: C.err },
+  missing: { text: "Not installed", color: C.err },
 };
 
 const Dot: FC<{ color: string; size?: number; glow?: boolean }> = ({ color, size = 10, glow }) => (
@@ -201,6 +230,72 @@ const PeerRow: FC<{ peer: Peer }> = ({ peer }) => (
   </Focusable>
 );
 
+const ServiceCard: FC<{
+  service: Service;
+  tailscaleUp: boolean;
+  busy: boolean;
+  onToggle: (enabled: boolean) => void;
+  onAutostart: (enabled: boolean) => void;
+}> = ({ service, tailscaleUp, busy, onToggle, onAutostart }) => {
+  const label = SERVICE_LABEL[service.state];
+  const running = service.state === "ready" || service.state === "starting";
+  const canToggle = !busy && service.state !== "missing" && service.state !== "stopping";
+  const remote = tailscaleUp && service.served;
+  const hint =
+    service.state === "missing"
+      ? `Unit ${service.unit} not found`
+      : running && service.serve && tailscaleUp && !service.served
+        ? "Tailscale Serve not applied (enable HTTPS on the tailnet)"
+        : running && service.serve && !tailscaleUp
+          ? "Local only · turn Tailscale on for remote access"
+          : "";
+
+  return (
+    <Focusable
+      style={{
+        margin: "4px 0 6px",
+        padding: "10px 12px 4px",
+        borderRadius: 10,
+        background: C.card,
+        border: `1px solid ${C.border}`,
+        display: "flex",
+        flexDirection: "column",
+        gap: 2,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <Dot color={busy ? C.warn : label.color} size={10} glow={service.state === "ready" && !busy} />
+        <span style={{ color: C.text, fontWeight: 600, fontSize: 14, flex: 1 }}>{service.label}</span>
+        <span style={{ color: label.color, fontSize: 12 }}>{busy ? "Working…" : label.text}</span>
+      </div>
+      {running && service.url && (
+        <span
+          style={{
+            color: remote ? C.on : C.muted,
+            fontSize: 11,
+            fontFamily: "monospace",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            paddingLeft: 20,
+          }}
+        >
+          {service.url}
+        </span>
+      )}
+      {hint && <span style={{ color: C.muted, fontSize: 11, paddingLeft: 20 }}>{hint}</span>}
+      <ToggleField label="Enabled" checked={running} disabled={!canToggle} onChange={onToggle} bottomSeparator="none" />
+      <ToggleField
+        label="Start at boot"
+        checked={service.autostart}
+        disabled={busy || service.state === "missing"}
+        onChange={onAutostart}
+        bottomSeparator="none"
+      />
+    </Focusable>
+  );
+};
+
 const Content: FC = () => {
   const visible = useQuickAccessVisible();
   const [status, setStatus] = useState<Status | null>(null);
@@ -230,6 +325,25 @@ const Content: FC = () => {
       const res = await setEnabled(enabled);
       if (!res.ok) {
         toaster.toast({ title: "Tailscale", body: res.error || "Toggle failed", critical: true });
+      } else if (res.warning) {
+        toaster.toast({ title: "Tailscale Serve", body: res.warning });
+      }
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+      refresh();
+    }
+  };
+
+  const runService = async (title: string, fn: () => Promise<Result>) => {
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      const res = await fn();
+      if (!res.ok) {
+        toaster.toast({ title, body: res.error || "Failed", critical: true });
+      } else if (res.warning) {
+        toaster.toast({ title, body: res.warning });
       }
     } finally {
       busyRef.current = false;
@@ -240,6 +354,7 @@ const Content: FC = () => {
 
   const state = status?.state ?? "stopped";
   const canToggle = state === "running" || state === "stopped" || state === "no_daemon";
+  const services = status?.services ?? [];
   const peers = status?.peers ?? [];
   const onlineCount = peers.filter((p) => p.online).length;
 
@@ -259,6 +374,22 @@ const Content: FC = () => {
           />
         </PanelSectionRow>
       </PanelSection>
+
+      {services.length > 0 && (
+        <PanelSection title="Services">
+          {services.map((svc) => (
+            <PanelSectionRow key={svc.id}>
+              <ServiceCard
+                service={svc}
+                tailscaleUp={state === "running"}
+                busy={busy}
+                onToggle={(on) => runService(svc.label, () => setServiceEnabled(svc.id, on))}
+                onAutostart={(on) => runService(svc.label, () => setServiceAutostart(svc.id, on))}
+              />
+            </PanelSectionRow>
+          ))}
+        </PanelSection>
+      )}
 
       {state === "running" && (
         <PanelSection title={`Devices · ${onlineCount}/${peers.length} online`}>

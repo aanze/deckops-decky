@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Build and install the plugin on a Decky device over SSH.
-#   scripts/deploy.sh [user@host]   (default: armada@192.168.1.20)
+#   scripts/deploy.sh [user@host]   (default: armada@192.168.1.26)
 # Decky keeps ~/homebrew/plugins owned by root, so the last step asks for the
 # device user's sudo password.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-DEVICE="${1:-armada@192.168.1.20}"
+DEVICE="${1:-armada@192.168.1.26}"
 NAME="tailscale-toggle"
 
 pnpm build

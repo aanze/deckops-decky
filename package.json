@@ -1,7 +1,7 @@
 {
   "name": "tailscale-toggle",
-  "version": "0.1.0",
-  "description": "Decky plugin: toggle Tailscale on/off and see your tailnet at a glance",
+  "version": "0.2.0",
+  "description": "Decky plugin: toggle Tailscale and your self-hosted services (OpenClaw gateway) from the Quick Access Menu",
   "type": "module",
   "scripts": {
     "build": "shx rm -rf dist && rollup -c",
@@ -11,7 +11,7 @@
     "type": "git",
     "url": "git+https://github.com/aanze/tailscale-toggle-decky.git"
   },
-  "keywords": ["decky-plugin", "tailscale", "steam-deck", "armada"],
+  "keywords": ["decky-plugin", "tailscale", "openclaw", "steam-deck", "armada"],
   "author": "aanze",
   "license": "MIT",
   "dependencies": {
