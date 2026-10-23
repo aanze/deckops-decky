@@ -129,6 +129,31 @@ every request through Serve fails with `proxy_attribution_required`.
 - `services.json` is a list of units the root backend will start, stop,
   enable and disable. Keep it to things you trust.
 
+## Letting the agent manage Decky plugins (optional)
+
+`~/homebrew/plugins` is root-owned, so an agent running as the device user
+cannot install or update plugins on its own. `contrib/openclaw/` ships a
+small root helper and a sudoers rule that give it exactly that, and nothing
+more:
+
+- `decky-plugin` — `list`, `install <dir-or-zip> [name]`, `remove <name>`,
+  `restart`. It validates the plugin tree (plugin.json, main.py,
+  dist/index.js), rejects zip path traversal and symlinks, copies the tree
+  root-owned and restarts `plugin_loader`. It is installed to
+  `/etc/openclaw/decky-plugin`, root-owned, so the agent cannot edit it.
+- `openclaw.sudoers` — lets the device user run that helper plus read-only
+  diagnostics (`journalctl`, `dmesg`, `bootc status`, `systemctl status`)
+  without a password. Adjust the user name if it is not `armada`.
+
+Install both once as root: check the file with `visudo -c -f`, copy the
+helper to `/etc/openclaw/decky-plugin` (mode 755) and the rule to
+`/etc/sudoers.d/openclaw` (mode 440). On Armada `/etc` is persistent across
+image updates, so this survives upgrades.
+
+Remember that Decky plugins with the `root` flag run as root: an agent that
+can install plugins can, in effect, run code as root. Keep that in mind when
+deciding what the agent reads and who can talk to it.
+
 ## Before installing: log Tailscale in once
 
 The plugin only switches an existing Tailscale login on and off; it does not

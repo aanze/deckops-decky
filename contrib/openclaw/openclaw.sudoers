@@ -1,0 +1,6 @@
+# /etc/sudoers.d/openclaw — let the OpenClaw agent (user armada) manage Decky
+# plugins and read system diagnostics without a password. Everything else
+# still asks for the password.
+Cmnd_Alias OPENCLAW_DECKY = /etc/openclaw/decky-plugin
+Cmnd_Alias OPENCLAW_DIAG = /usr/bin/journalctl, /usr/bin/dmesg, /usr/bin/bootc status, /usr/bin/systemctl status *
+armada ALL=(root) NOPASSWD: OPENCLAW_DECKY, OPENCLAW_DIAG

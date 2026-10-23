@@ -1,0 +1,157 @@
+#!/usr/bin/python3 -I
+"""Root helper so an unprivileged agent can manage Decky plugins.
+
+Installed as /etc/openclaw/decky-plugin (root-owned, so the agent cannot
+alter it) and allowed through /etc/sudoers.d/openclaw without a password:
+
+    sudo decky-plugin list
+    sudo decky-plugin install <dir-or-zip> [name]
+    sudo decky-plugin remove <name>
+    sudo decky-plugin restart
+
+Decky keeps ~/homebrew/plugins root-owned; this is the only root path the
+agent gets, and it does nothing but copy a plugin tree there and restart
+plugin_loader. Everything is logged through sudo and to stderr.
+"""
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import zipfile
+
+DECKY_USER = "armada"
+PLUGINS = f"/var/home/{DECKY_USER}/homebrew/plugins"
+NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+UNIT = "plugin_loader"
+
+
+def die(msg, code=1):
+    print(f"decky-plugin: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def valid_name(name):
+    if not NAME_RE.match(name) or ".." in name:
+        die(f"invalid plugin name {name!r}")
+    return name
+
+
+def restart():
+    subprocess.run(["systemctl", "restart", UNIT], check=True)
+    print(f"{UNIT} restarted")
+
+
+def cmd_list():
+    if not os.path.isdir(PLUGINS):
+        die(f"{PLUGINS} missing")
+    for name in sorted(os.listdir(PLUGINS)):
+        pj = os.path.join(PLUGINS, name, "plugin.json")
+        pkg = os.path.join(PLUGINS, name, "package.json")
+        if not os.path.isfile(pj):
+            continue
+        try:
+            with open(pkg, encoding="utf-8") as f:
+                version = json.load(f).get("version", "?")
+        except (OSError, json.JSONDecodeError):
+            version = "?"
+        print(f"{name}\t{version}")
+
+
+def extract_zip(path, dest):
+    with zipfile.ZipFile(path) as zf:
+        for info in zf.infolist():
+            target = os.path.realpath(os.path.join(dest, info.filename))
+            if not target.startswith(os.path.realpath(dest) + os.sep):
+                die(f"zip entry escapes destination: {info.filename}")
+            if info.is_dir():
+                continue
+            if (info.external_attr >> 16) & 0o120000 == 0o120000:
+                die(f"zip contains a symlink: {info.filename}")
+        zf.extractall(dest)
+
+
+def plugin_root(path):
+    """The directory that holds plugin.json: `path` itself, or its single subdirectory."""
+    if os.path.isfile(os.path.join(path, "plugin.json")):
+        return path
+    entries = [e for e in os.listdir(path) if not e.startswith(".")]
+    if len(entries) == 1 and os.path.isfile(os.path.join(path, entries[0], "plugin.json")):
+        return os.path.join(path, entries[0])
+    die("no plugin.json found (expected at the top level or in a single subdirectory)")
+
+
+def cmd_install(source, name=None):
+    source = os.path.realpath(source)
+    if not os.path.exists(source):
+        die(f"{source} does not exist")
+    work = tempfile.mkdtemp(prefix="decky-plugin.")
+    try:
+        if os.path.isdir(source):
+            root = plugin_root(source)
+        elif zipfile.is_zipfile(source):
+            extract_zip(source, work)
+            root = plugin_root(work)
+        else:
+            die(f"{source} is neither a directory nor a zip")
+
+        with open(os.path.join(root, "plugin.json"), encoding="utf-8") as f:
+            meta = json.load(f)
+        if not meta.get("name"):
+            die("plugin.json has no name")
+        for required in ("main.py", "dist/index.js"):
+            if not os.path.exists(os.path.join(root, required)):
+                die(f"{required} missing in plugin")
+
+        name = valid_name(name or os.path.basename(os.path.normpath(root)))
+        dest = os.path.join(PLUGINS, name)
+        staging = os.path.join(PLUGINS, f".staging-{name}")
+        shutil.rmtree(staging, ignore_errors=True)
+        shutil.copytree(root, staging, symlinks=False, ignore=shutil.ignore_patterns("__pycache__", ".git", "node_modules"))
+        for dirpath, dirnames, filenames in os.walk(staging):
+            os.chown(dirpath, 0, 0)
+            os.chmod(dirpath, 0o755)
+            for fn in filenames:
+                p = os.path.join(dirpath, fn)
+                os.chown(p, 0, 0)
+                os.chmod(p, 0o644)
+        shutil.rmtree(dest, ignore_errors=True)
+        os.rename(staging, dest)
+        print(f"installed {meta['name']} as {dest}")
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    restart()
+
+
+def cmd_remove(name):
+    name = valid_name(name)
+    dest = os.path.join(PLUGINS, name)
+    if not os.path.isdir(dest):
+        die(f"{dest} not installed")
+    shutil.rmtree(dest)
+    print(f"removed {dest}")
+    restart()
+
+
+def main(argv):
+    if os.geteuid() != 0:
+        die("must run as root (sudo)")
+    if len(argv) < 1:
+        die("usage: decky-plugin list | install <dir-or-zip> [name] | remove <name> | restart", 2)
+    cmd, args = argv[0], argv[1:]
+    if cmd == "list" and not args:
+        cmd_list()
+    elif cmd == "install" and 1 <= len(args) <= 2:
+        cmd_install(*args)
+    elif cmd == "remove" and len(args) == 1:
+        cmd_remove(args[0])
+    elif cmd == "restart" and not args:
+        restart()
+    else:
+        die("usage: decky-plugin list | install <dir-or-zip> [name] | remove <name> | restart", 2)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
