@@ -1,6 +1,7 @@
 import { addEventListener, callable, definePlugin, removeEventListener, toaster, useQuickAccessVisible } from "@decky/api";
 import {
   ButtonItem,
+  DialogButton,
   Focusable,
   PanelSection,
   PanelSectionRow,
@@ -8,7 +9,7 @@ import {
   ToggleField,
   staticClasses,
 } from "@decky/ui";
-import { FC, useCallback, useEffect, useRef, useState } from "react";
+import React, { FC, useCallback, useEffect, useRef, useState } from "react";
 
 type State = "running" | "stopped" | "needs_login" | "no_daemon" | "missing" | "error";
 
@@ -75,6 +76,17 @@ const chatStore = {
   pendingId: "" as string,
 };
 const CHAT_MAX = 30;
+
+// Two buttons side by side: DialogButton has a wide min-width by default.
+const SMALL_BUTTON: React.CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+  padding: "8px 6px",
+  fontSize: 12,
+  whiteSpace: "nowrap",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+};
 
 const POLL_MS = 4000;
 
@@ -459,13 +471,13 @@ const ChatBox: FC<{ service: Service }> = ({ service }) => {
         </ButtonItem>
       </PanelSectionRow>
       <PanelSectionRow>
-        <Focusable style={{ display: "flex", gap: 8 }}>
-          <ButtonItem layout="below" onClick={() => chatCancel()} disabled={!sending}>
+        <Focusable style={{ display: "flex", gap: 8, width: "100%", boxSizing: "border-box" }}>
+          <DialogButton style={SMALL_BUTTON} onClick={() => chatCancel()} disabled={!sending}>
             Stop
-          </ButtonItem>
-          <ButtonItem layout="below" onClick={reset} disabled={sending}>
+          </DialogButton>
+          <DialogButton style={SMALL_BUTTON} onClick={reset} disabled={sending}>
             New session
-          </ButtonItem>
+          </DialogButton>
         </Focusable>
       </PanelSectionRow>
     </>
