@@ -1,7 +1,7 @@
 {
-  "name": "tailscale-toggle",
-  "version": "0.2.0",
-  "description": "Decky plugin: toggle Tailscale and your self-hosted services (OpenClaw gateway) from the Quick Access Menu",
+  "name": "deckops",
+  "version": "0.3.0",
+  "description": "Decky plugin: Tailscale toggle, service switches (OpenClaw gateway) and a chat box to your on-device agent",
   "type": "module",
   "scripts": {
     "build": "shx rm -rf dist && rollup -c",
@@ -9,9 +9,16 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aanze/tailscale-toggle-decky.git"
+    "url": "git+https://github.com/aanze/deckops-decky.git"
   },
-  "keywords": ["decky-plugin", "tailscale", "openclaw", "steam-deck", "armada"],
+  "keywords": [
+    "decky-plugin",
+    "tailscale",
+    "openclaw",
+    "steam-deck",
+    "armada",
+    "odin"
+  ],
   "author": "aanze",
   "license": "MIT",
   "dependencies": {
@@ -28,7 +35,10 @@
   },
   "pnpm": {
     "peerDependencyRules": {
-      "ignoreMissing": ["react", "react-dom"]
+      "ignoreMissing": [
+        "react",
+        "react-dom"
+      ]
     }
   }
 }

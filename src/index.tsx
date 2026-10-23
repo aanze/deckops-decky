@@ -1,5 +1,13 @@
-import { callable, definePlugin, toaster, useQuickAccessVisible } from "@decky/api";
-import { ButtonItem, Focusable, PanelSection, PanelSectionRow, ToggleField, staticClasses } from "@decky/ui";
+import { addEventListener, callable, definePlugin, removeEventListener, toaster, useQuickAccessVisible } from "@decky/api";
+import {
+  ButtonItem,
+  Focusable,
+  PanelSection,
+  PanelSectionRow,
+  TextField,
+  ToggleField,
+  staticClasses,
+} from "@decky/ui";
 import { FC, useCallback, useEffect, useRef, useState } from "react";
 
 type State = "running" | "stopped" | "needs_login" | "no_daemon" | "missing" | "error";
@@ -24,6 +32,7 @@ interface Service {
   serve: boolean;
   served: boolean;
   url: string;
+  chat: boolean;
 }
 
 interface Status {
@@ -49,6 +58,23 @@ const getStatus = callable<[], Status>("get_status");
 const setEnabled = callable<[enabled: boolean], Result>("set_enabled");
 const setServiceEnabled = callable<[id: string, enabled: boolean], Result>("set_service_enabled");
 const setServiceAutostart = callable<[id: string, enabled: boolean], Result>("set_service_autostart");
+const chatSend = callable<[id: string, requestId: string, session: string, text: string], Result>("chat_send");
+const chatCancel = callable<[], Result>("chat_cancel");
+
+interface ChatMessage {
+  role: "user" | "assistant";
+  text: string;
+  error?: string;
+  pending?: boolean;
+}
+
+// Survives the panel closing (the content unmounts) while the plugin is loaded.
+const chatStore = {
+  session: `deckops-${Math.random().toString(36).slice(2, 10)}`,
+  messages: [] as ChatMessage[],
+  pendingId: "" as string,
+};
+const CHAT_MAX = 30;
 
 const POLL_MS = 4000;
 
@@ -296,6 +322,156 @@ const ServiceCard: FC<{
   );
 };
 
+const Bubble: FC<{ msg: ChatMessage }> = ({ msg }) => {
+  const user = msg.role === "user";
+  return (
+    <Focusable
+      style={{
+        alignSelf: user ? "flex-end" : "flex-start",
+        maxWidth: "92%",
+        padding: "6px 9px",
+        borderRadius: 8,
+        background: user ? "rgba(96,165,250,0.18)" : "rgba(255,255,255,0.06)",
+        border: `1px solid ${msg.error ? C.err : C.border}`,
+        color: C.text,
+        fontSize: 12,
+        lineHeight: 1.35,
+        whiteSpace: "pre-wrap",
+        wordBreak: "break-word",
+        fontFamily: user ? undefined : "monospace",
+      }}
+    >
+      {msg.text || (msg.pending ? "…" : "")}
+      {msg.error && <div style={{ color: C.err, marginTop: 4 }}>{msg.error}</div>}
+    </Focusable>
+  );
+};
+
+const ChatBox: FC<{ service: Service }> = ({ service }) => {
+  const [messages, setMessages] = useState<ChatMessage[]>(chatStore.messages);
+  const [draft, setDraft] = useState("");
+  const [sending, setSending] = useState(!!chatStore.pendingId);
+  const endRef = useRef<HTMLDivElement>(null);
+
+  const commit = (next: ChatMessage[]) => {
+    chatStore.messages = next.slice(-CHAT_MAX);
+    setMessages(chatStore.messages);
+  };
+
+  useEffect(() => {
+    const onDelta = (ev: { id: string; delta: string }) => {
+      if (ev.id !== chatStore.pendingId) return;
+      const next = [...chatStore.messages];
+      const last = next[next.length - 1];
+      if (last && last.role === "assistant" && last.pending) {
+        next[next.length - 1] = { ...last, text: last.text + ev.delta };
+        commit(next);
+      }
+    };
+    const onDone = (ev: { id: string; error?: string; cancelled?: boolean }) => {
+      if (ev.id !== chatStore.pendingId) return;
+      const next = [...chatStore.messages];
+      const last = next[next.length - 1];
+      if (last && last.role === "assistant" && last.pending) {
+        next[next.length - 1] = {
+          ...last,
+          pending: false,
+          error: ev.error,
+          text: ev.cancelled ? `${last.text}\n[cancelled]` : last.text,
+        };
+        commit(next);
+      }
+      chatStore.pendingId = "";
+      setSending(false);
+    };
+    addEventListener("chat_delta", onDelta);
+    addEventListener("chat_done", onDone);
+    return () => {
+      removeEventListener("chat_delta", onDelta);
+      removeEventListener("chat_done", onDone);
+    };
+  }, []);
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [messages]);
+
+  const send = async () => {
+    const text = draft.trim();
+    if (!text || sending) return;
+    const id = `${Date.now()}`;
+    chatStore.pendingId = id;
+    setSending(true);
+    setDraft("");
+    commit([...chatStore.messages, { role: "user", text }, { role: "assistant", text: "", pending: true }]);
+    const res = await chatSend(service.id, id, chatStore.session, text);
+    if (!res.ok && chatStore.pendingId === id) {
+      // chat_done may not have fired (e.g. backend refused the call outright).
+      const next = [...chatStore.messages];
+      const last = next[next.length - 1];
+      if (last?.pending) next[next.length - 1] = { ...last, pending: false, error: res.error || "Failed" };
+      commit(next);
+      chatStore.pendingId = "";
+      setSending(false);
+    }
+  };
+
+  const reset = () => {
+    chatStore.session = `deckops-${Math.random().toString(36).slice(2, 10)}`;
+    chatStore.pendingId = "";
+    commit([]);
+    setSending(false);
+  };
+
+  return (
+    <>
+      {messages.length > 0 && (
+        <PanelSectionRow>
+          <Focusable
+            flow-children="vertical"
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 6,
+              maxHeight: 260,
+              overflowY: "auto",
+              padding: "4px 2px",
+            }}
+          >
+            {messages.map((m, i) => (
+              <Bubble key={i} msg={m} />
+            ))}
+            <div ref={endRef} />
+          </Focusable>
+        </PanelSectionRow>
+      )}
+      <PanelSectionRow>
+        <TextField
+          label={`Ask ${service.label}`}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          disabled={sending}
+        />
+      </PanelSectionRow>
+      <PanelSectionRow>
+        <ButtonItem layout="below" onClick={send} disabled={sending || !draft.trim()}>
+          {sending ? "Waiting for reply…" : "Send"}
+        </ButtonItem>
+      </PanelSectionRow>
+      <PanelSectionRow>
+        <Focusable style={{ display: "flex", gap: 8 }}>
+          <ButtonItem layout="below" onClick={() => chatCancel()} disabled={!sending}>
+            Stop
+          </ButtonItem>
+          <ButtonItem layout="below" onClick={reset} disabled={sending}>
+            New session
+          </ButtonItem>
+        </Focusable>
+      </PanelSectionRow>
+    </>
+  );
+};
+
 const Content: FC = () => {
   const visible = useQuickAccessVisible();
   const [status, setStatus] = useState<Status | null>(null);
@@ -307,7 +483,7 @@ const Content: FC = () => {
     try {
       setStatus(await getStatus());
     } catch (e) {
-      console.error("[tailscale-toggle] get_status failed", e);
+      console.error("[deckops] get_status failed", e);
     }
   }, []);
 
@@ -391,6 +567,14 @@ const Content: FC = () => {
         </PanelSection>
       )}
 
+      {services
+        .filter((svc) => svc.chat && svc.state === "ready")
+        .map((svc) => (
+          <PanelSection key={`chat-${svc.id}`} title={`${svc.label} chat`}>
+            <ChatBox service={svc} />
+          </PanelSection>
+        ))}
+
       {state === "running" && (
         <PanelSection title={`Devices · ${onlineCount}/${peers.length} online`}>
           {peers.length === 0 ? (
@@ -420,21 +604,18 @@ const Content: FC = () => {
   );
 };
 
-// 3×3 dot grid, in the spirit of the Tailscale mark.
+// A handheld outline with a terminal prompt: switches and a line to the operator.
 const Icon: FC = () => (
-  <svg width="1em" height="1em" viewBox="0 0 24 24" fill="currentColor">
-    {[3, 12, 21].flatMap((y, r) =>
-      [3, 12, 21].map((x, c) => {
-        const bright = r === 1 || (r === 2 && c === 1);
-        return <circle key={`${r}${c}`} cx={x} cy={y} r={2.6} opacity={bright ? 1 : 0.35} />;
-      }),
-    )}
+  <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+    <rect x={2} y={6} width={20} height={12} rx={3} />
+    <path d="M7 10l2.5 2L7 14" />
+    <path d="M12 14h4" />
   </svg>
 );
 
 export default definePlugin(() => ({
-  name: "Tailscale Toggle",
-  titleView: <div className={staticClasses.Title}>Tailscale</div>,
+  name: "DeckOps",
+  titleView: <div className={staticClasses.Title}>DeckOps</div>,
   content: <Content />,
   icon: <Icon />,
 }));

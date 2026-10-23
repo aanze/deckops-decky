@@ -1,11 +1,19 @@
 {
-  "name": "Tailscale Toggle",
+  "name": "DeckOps",
   "author": "aanze",
-  "flags": ["root"],
+  "flags": [
+    "root"
+  ],
   "api_version": 1,
   "publish": {
-    "tags": ["network", "tailscale", "vpn", "openclaw", "root"],
-    "description": "Turn Tailscale on or off from the Quick Access Menu, see your tailnet at a glance, and start/stop self-hosted services such as the OpenClaw gateway, exposed over Tailscale Serve.",
-    "image": "https://raw.githubusercontent.com/aanze/tailscale-toggle-decky/main/assets/preview.png"
+    "tags": [
+      "network",
+      "tailscale",
+      "openclaw",
+      "ai",
+      "root"
+    ],
+    "description": "Tailscale on/off, start/stop your self-hosted services (OpenClaw gateway) exposed over Tailscale Serve, and chat with the on-device agent from the Quick Access Menu.",
+    "image": "https://raw.githubusercontent.com/aanze/deckops-decky/main/assets/preview.png"
   }
 }

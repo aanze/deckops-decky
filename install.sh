@@ -1,14 +1,14 @@
 #!/bin/sh
-# Install (or update) Tailscale Toggle on a Decky device. Run it ON the device:
-#   sh -c "$(curl -fsSL https://raw.githubusercontent.com/aanze/tailscale-toggle-decky/main/install.sh)"
+# Install (or update) DeckOps on a Decky device. Run it ON the device:
+#   sh -c "$(curl -fsSL https://raw.githubusercontent.com/aanze/deckops-decky/main/install.sh)"
 set -eu
 
-URL="https://github.com/aanze/tailscale-toggle-decky/releases/latest/download/tailscale-toggle.zip"
+URL="https://github.com/aanze/deckops-decky/releases/latest/download/deckops.zip"
 PLUGINS="$HOME/homebrew/plugins"
-NAME="tailscale-toggle"
+NAME="deckops"
 
 [ -d "$PLUGINS" ] || { echo "Decky Loader not found ($PLUGINS missing)."; exit 1; }
-command -v tailscale >/dev/null || echo "Warning: 'tailscale' is not installed; the plugin will show 'not installed'."
+command -v tailscale >/dev/null || echo "Warning: 'tailscale' is not installed; the Tailscale card will show 'not installed'."
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT

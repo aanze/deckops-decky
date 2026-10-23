@@ -24,16 +24,16 @@ jobs:
       - run: pnpm build
       - name: Package plugin
         run: |
-          mkdir -p out/tailscale-toggle
-          cp -r dist main.py plugin.json package.json LICENSE README.md out/tailscale-toggle/
-          (cd out && zip -r ../tailscale-toggle.zip tailscale-toggle)
+          mkdir -p out/deckops
+          cp -r dist main.py plugin.json package.json LICENSE README.md out/deckops/
+          (cd out && zip -r ../deckops.zip deckops)
       - uses: actions/upload-artifact@v4
         with:
-          name: tailscale-toggle
-          path: tailscale-toggle.zip
+          name: deckops
+          path: deckops.zip
       - name: Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: tailscale-toggle.zip
+          files: deckops.zip
           generate_release_notes: true

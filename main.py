@@ -5,6 +5,9 @@ import re
 import shutil
 import socket
 import subprocess
+import threading
+import urllib.error
+import urllib.request
 
 import decky
 
@@ -13,9 +16,8 @@ SYSTEMCTL = shutil.which("systemctl") or "/usr/bin/systemctl"
 
 # Decky runs this backend as root; user services belong to the logged-in user.
 USER = getattr(decky, "DECKY_USER", "") or os.environ.get("DECKY_USER", "") or "deck"
-SETTINGS_DIR = getattr(decky, "DECKY_PLUGIN_SETTINGS_DIR", "") or os.path.join(
-    os.path.expanduser("~"), ".config", "tailscale-toggle"
-)
+USER_HOME = getattr(decky, "DECKY_USER_HOME", "") or os.environ.get("DECKY_USER_HOME", "") or f"/home/{USER}"
+SETTINGS_DIR = getattr(decky, "DECKY_PLUGIN_SETTINGS_DIR", "") or os.path.join(USER_HOME, ".config", "deckops")
 SERVICES_FILE = os.path.join(SETTINGS_DIR, "services.json")
 
 # Services the plugin can start/stop. Users can add their own in services.json:
@@ -26,6 +28,10 @@ SERVICES_FILE = os.path.join(SETTINGS_DIR, "services.json")
 #   port       local TCP port to probe for readiness (optional)
 #   serve      expose that port over Tailscale Serve (HTTPS on the tailnet) (optional)
 #   local_url  what to show when Tailscale is off (optional)
+#   chat       OpenAI-compatible chat endpoint of the service, for the chat box (optional):
+#                base_url    e.g. http://127.0.0.1:18789
+#                token_file  OpenClaw config file holding gateway.auth.token ("~" = the user's home)
+#                model       value of the "model" field (OpenClaw: agent id, "openclaw" = default agent)
 DEFAULT_SERVICES = [
     {
         "id": "openclaw",
@@ -35,6 +41,11 @@ DEFAULT_SERVICES = [
         "port": 18789,
         "serve": True,
         "local_url": "http://127.0.0.1:18789",
+        "chat": {
+            "base_url": "http://127.0.0.1:18789",
+            "token_file": "~/.openclaw/openclaw.json",
+            "model": "openclaw",
+        },
     }
 ]
 
@@ -186,6 +197,7 @@ def service_status(svc, ts):
         "serve": bool(svc.get("serve")),
         "served": served,
         "url": url,
+        "chat": bool(svc.get("chat")),
     }
 
 
@@ -328,6 +340,100 @@ def set_service_autostart(service_id, enabled):
     return {"ok": True}
 
 
+# ---------------------------------------------------------------- chat
+
+
+def _expand_user_path(path):
+    if path.startswith("~/"):
+        return os.path.join(USER_HOME, path[2:])
+    return path
+
+
+def _chat_token(chat):
+    """Gateway token, read from the service's config file. It never leaves the
+    device: the backend talks to the gateway on loopback only."""
+    token_file = chat.get("token_file")
+    if not token_file:
+        return ""
+    try:
+        with open(_expand_user_path(token_file), encoding="utf-8") as f:
+            raw = f.read()
+    except OSError as e:
+        decky.logger.warning("chat token file unreadable: %s", e)
+        return ""
+    try:
+        cfg = json.loads(raw)
+        return str(((cfg.get("gateway") or {}).get("auth") or {}).get("token") or "")
+    except json.JSONDecodeError:
+        m = re.search(r'"?token"?\s*:\s*"([^"]+)"', raw)  # JSON5 fallback
+        return m.group(1) if m else ""
+
+
+class ChatRun:
+    def __init__(self, loop):
+        self.loop = loop
+        self.cancel = threading.Event()
+
+    def emit(self, event, payload):
+        asyncio.run_coroutine_threadsafe(decky.emit(event, payload), self.loop)
+
+    def send(self, svc, request_id, session, text):
+        chat = svc.get("chat") or {}
+        base = (chat.get("base_url") or svc.get("local_url") or "").rstrip("/")
+        if not base:
+            return {"ok": False, "error": "no chat endpoint configured"}
+        token = _chat_token(chat)
+        body = json.dumps(
+            {
+                "model": chat.get("model") or "openclaw",
+                "stream": True,
+                "user": session,  # same value = same gateway session
+                "messages": [{"role": "user", "content": text}],
+            }
+        ).encode("utf-8")
+        headers = {"content-type": "application/json", "accept": "text/event-stream"}
+        if token:
+            headers["authorization"] = f"Bearer {token}"
+        req = urllib.request.Request(f"{base}/v1/chat/completions", data=body, headers=headers, method="POST")
+        self.cancel.clear()
+        try:
+            with urllib.request.urlopen(req, timeout=180) as resp:
+                for raw in resp:
+                    if self.cancel.is_set():
+                        self.emit("chat_done", {"id": request_id, "cancelled": True})
+                        return {"ok": True, "cancelled": True}
+                    line = raw.decode("utf-8", errors="replace").strip()
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+                    for choice in chunk.get("choices") or []:
+                        delta = (choice.get("delta") or {}).get("content")
+                        if delta:
+                            self.emit("chat_delta", {"id": request_id, "delta": delta})
+            self.emit("chat_done", {"id": request_id})
+            return {"ok": True}
+        except urllib.error.HTTPError as e:
+            try:
+                msg = json.loads(e.read().decode("utf-8", errors="replace")).get("error", {}).get("message", "")
+            except Exception:
+                msg = ""
+            err = f"HTTP {e.code}: {msg or e.reason}"
+            if e.code == 404:
+                err += " (enable gateway.http.endpoints.chatCompletions)"
+            self.emit("chat_done", {"id": request_id, "error": err})
+            return {"ok": False, "error": err}
+        except (urllib.error.URLError, OSError) as e:
+            err = f"gateway unreachable: {getattr(e, 'reason', e)}"
+            self.emit("chat_done", {"id": request_id, "error": err})
+            return {"ok": False, "error": err}
+
+
 class Plugin:
     async def get_status(self):
         return await asyncio.to_thread(build_status)
@@ -350,10 +456,25 @@ class Plugin:
         decky.logger.info("service %s autostart %s", service_id, enabled)
         return await asyncio.to_thread(set_service_autostart, str(service_id), bool(enabled))
 
+    async def chat_send(self, service_id: str, request_id: str, session: str, text: str):
+        """Stream one chat turn: emits chat_delta {id, delta} then chat_done {id, error?}."""
+        svc = _find_service(str(service_id))
+        if not svc or not svc.get("chat"):
+            return {"ok": False, "error": f"no chat for service {service_id}"}
+        text = str(text).strip()
+        if not text:
+            return {"ok": False, "error": "empty message"}
+        decky.logger.info("chat %s: %d chars", service_id, len(text))
+        return await asyncio.to_thread(self.chat.send, svc, str(request_id), str(session)[:64], text[:4000])
+
+    async def chat_cancel(self):
+        self.chat.cancel.set()
+        return {"ok": True}
+
     async def _main(self):
-        decky.logger.info(
-            "Tailscale Toggle loaded (binary: %s, user: %s, services: %s)", TAILSCALE, USER, SERVICES_FILE
-        )
+        self.chat = ChatRun(asyncio.get_running_loop())
+        decky.logger.info("DeckOps loaded (tailscale: %s, user: %s, services: %s)", TAILSCALE, USER, SERVICES_FILE)
 
     async def _unload(self):
-        pass
+        if getattr(self, "chat", None):
+            self.chat.cancel.set()
