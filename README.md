@@ -42,7 +42,7 @@ requires it. Everything else it does, it does as root too, so read the
 
 ## Services
 
-Services live in `~/homebrew/settings/DeckOps/services.json`, written with
+Services live in `~/homebrew/settings/deckops/services.json`, written with
 this default on first run:
 
 ```json
@@ -162,7 +162,7 @@ it again to update. Decky loads the plugin on its own; if it does not show up,
 
 Upgrading from *Tailscale Toggle*: remove the old folder first
 (`sudo rm -rf ~/homebrew/plugins/tailscale-toggle`). The settings directory
-is new (`DeckOps`), so `services.json` is recreated with the default above.
+is new (`deckops`), so `services.json` is recreated with the default above.
 
 ### From the zip
 
