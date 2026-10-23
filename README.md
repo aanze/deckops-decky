@@ -100,6 +100,7 @@ openclaw config set gateway.auth.token "$(openssl rand -hex 32)"
 openclaw config set gateway.tailscale.mode off         # the plugin manages Serve
 openclaw config set gateway.trustedProxies '["127.0.0.1"]'   # Serve proxies from loopback
 openclaw config set gateway.auth.allowTailscale false  # identity auth only works with managed Serve
+openclaw config set gateway.publicOrigin https://<device>.<tailnet>.ts.net  # lets `openclaw qr` pair the mobile app
 openclaw gateway install && systemctl --user disable openclaw-gateway.service
 printf 'ANTHROPIC_API_KEY=sk-ant-...
 ' >> ~/.openclaw/.env && chmod 600 ~/.openclaw/.env
