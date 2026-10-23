@@ -97,8 +97,9 @@ openclaw config set gateway.bind loopback
 openclaw config set gateway.port 18789
 openclaw config set gateway.auth.mode token
 openclaw config set gateway.auth.token "$(openssl rand -hex 32)"
-openclaw config set gateway.auth.allowTailscale true   # tailnet identity = no token prompt
 openclaw config set gateway.tailscale.mode off         # the plugin manages Serve
+openclaw config set gateway.trustedProxies '["127.0.0.1"]'   # Serve proxies from loopback
+openclaw config set gateway.auth.allowTailscale false  # identity auth only works with managed Serve
 openclaw gateway install && systemctl --user disable openclaw-gateway.service
 printf 'ANTHROPIC_API_KEY=sk-ant-...
 ' >> ~/.openclaw/.env && chmod 600 ~/.openclaw/.env
@@ -107,6 +108,9 @@ openclaw models set anthropic/claude-opus-5-5
 
 `gateway.tailscale.mode` stays `off` on purpose: with `serve`, the gateway
 refuses to start while Tailscale is down, which defeats independent toggles.
+The price is that the Control UI asks for the gateway token once per browser
+(`openclaw gateway auth-token` prints it); without `trustedProxies` every
+request through Serve fails with `proxy_attribution_required`.
 
 ## Install
 
